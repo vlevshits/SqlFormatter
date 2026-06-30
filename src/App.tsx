@@ -1,34 +1,14 @@
-import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { 
-  Database, 
-  Sparkle, 
-  Trash, 
-  Copy, 
-  Check, 
-  FileText, 
-  ClockCounterClockwise, 
-  ClipboardText,
-  ArrowsClockwise, 
-  Gear,
-  Download,
-  Terminal,
-  Eraser,
-  MagnifyingGlass,
-  X
-} from "@phosphor-icons/react";
+import { useState, useEffect, useRef } from "react";
+import { Database } from "lucide-react";
 import { formatAndSubstituteQuery, FormatConfig, ParseResult } from "./utils/sqlParser";
 import { invoke } from "@tauri-apps/api/core";
-
-
-
-interface HistoryItem {
-  id: string;
-  timestamp: string;
-  dialect: "mssql" | "postgres";
-  rawInput: string;
-  formattedOutput: string;
-}
+import { useQueryHistory, HistoryItem } from "./hooks/useQueryHistory";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { ParametersPanel } from "./components/ParametersPanel";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { RawSqlEditor } from "./components/RawSqlEditor";
+import { FormattedSqlViewer } from "./components/FormattedSqlViewer";
+import { Toast } from "./components/Toast";
 
 function App() {
   const [dialect, setDialect] = useState<"mssql" | "postgres">("mssql");
@@ -36,41 +16,30 @@ function App() {
   const [config, setConfig] = useState<FormatConfig>({
     tabWidth: 2,
     keywordCase: "upper",
-    logicalOperatorNewline: "before"
+    logicalOperatorNewline: "before",
   });
-  
+
+  const [paramOverrides, setParamOverrides] = useState<Record<string, string>>({});
+  const [hoveredParam, setHoveredParam] = useState<string | null>(null);
+  const [focusedParam, setFocusedParam] = useState<string | null>(null);
+
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [copySuccess, setCopySuccess] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [stats, setStats] = useState({
     timeMs: 0,
     charReduction: 0,
-    paramCount: 0
+    paramCount: 0,
   });
 
-  // State variables for parameter overrides, search filtering, and interactions
-  const [paramOverrides, setParamOverrides] = useState<Record<string, string>>({});
-  const [paramSearchQuery, setParamSearchQuery] = useState("");
-  const [hoveredParam, setHoveredParam] = useState<string | null>(null);
-  const [focusedParam, setFocusedParam] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  // Custom hook for history management
+  const { history, saveToHistory, deleteHistoryItem, clearHistory } = useQueryHistory();
 
   // Refs for auto-saving behavior and raw editor scroll syncing
   const shouldAutoSaveRef = useRef(false);
   const rawPreRef = useRef<HTMLPreElement>(null);
   const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Load history from localStorage on startup
-  useEffect(() => {
-    const saved = localStorage.getItem("sql_formatter_history");
-    if (saved) {
-      try {
-        setHistory(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load history", e);
-      }
-    }
-  }, []);
 
   // Disable default browser context menu globally to prevent native popups
   useEffect(() => {
@@ -128,10 +97,9 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Clear overrides and search query when inputSql or dialect changes
+  // Clear overrides when inputSql or dialect changes
   useEffect(() => {
     setParamOverrides({});
-    setParamSearchQuery("");
   }, [inputSql, dialect]);
 
   // Sync scroll positions when inputSql changes (e.g. on paste or load from history)
@@ -165,50 +133,27 @@ function App() {
       setStats({
         timeMs: Math.round((end - start) * 10) / 10,
         charReduction: origLen - newLen,
-        paramCount: result.parameters.length
+        paramCount: result.parameters.length,
       });
-    } else {
-      setStats({ timeMs: 0, charReduction: 0, paramCount: 0 });
     }
   }, [inputSql, dialect, config, paramOverrides]);
 
-  // Helper to save history item directly (and ensure we don't save duplicates)
-  const saveToHistoryDirectly = (raw: string, formatted: string, currentDialect: "mssql" | "postgres") => {
-    setHistory((prev) => {
-      if (prev.some((item) => item.rawInput.trim() === raw.trim())) return prev;
-      const newItem: HistoryItem = {
-        id: Date.now().toString(),
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        dialect: currentDialect,
-        rawInput: raw,
-        formattedOutput: formatted,
-      };
-      const updated = [newItem, ...prev].slice(0, 30);
-      localStorage.setItem("sql_formatter_history", JSON.stringify(updated));
-      return updated;
-    });
-  };
-
-  // Auto-Save Effect (immediate on paste, debounced on typing)
+  // Auto-save history after typing or pasting
   useEffect(() => {
     if (!parseResult || !parseResult.success || !inputSql.trim()) return;
 
-    // Check if already in history
-    const exists = history.some(item => item.rawInput.trim() === inputSql.trim());
-    if (exists) return;
-
     if (shouldAutoSaveRef.current) {
       shouldAutoSaveRef.current = false;
-      saveToHistoryDirectly(inputSql, parseResult.formattedSql, dialect);
+      saveToHistory(inputSql, parseResult.formattedSql, dialect);
       return;
     }
 
     const timer = setTimeout(() => {
-      saveToHistoryDirectly(inputSql, parseResult.formattedSql, dialect);
+      saveToHistory(inputSql, parseResult.formattedSql, dialect);
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [parseResult, inputSql, dialect, history]);
+  }, [parseResult, inputSql, dialect, saveToHistory]);
 
   // Show a temporary message toast
   const triggerToast = (msg: string) => {
@@ -231,10 +176,9 @@ function App() {
     }
   };
 
-  // Paste from clipboard
-  const handlePaste = async () => {
+  // Paste from clipboard button action
+  const handlePasteClick = async () => {
     try {
-      // Use Tauri command to read from clipboard to bypass WebKit permission popups
       const text = await invoke<string>("read_clipboard");
       if (text) {
         shouldAutoSaveRef.current = true;
@@ -244,7 +188,6 @@ function App() {
         triggerToast("Clipboard is empty");
       }
     } catch (err) {
-      // Fallback to browser clipboard if Tauri command fails or in browser dev environment
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
@@ -266,7 +209,7 @@ function App() {
       ...prev,
       [name]: newValue,
     }));
-    
+
     setTimeout(() => {
       const element = document.querySelector(`[data-formatted-param-token="${name}"]`);
       if (element) {
@@ -275,28 +218,16 @@ function App() {
     }, 50);
   };
 
-  // Save query to history
+  // Save query manually to history
   const handleSaveToHistory = () => {
     if (!parseResult || !parseResult.success) return;
-    
-    // Check if it already exists to avoid duplicates
-    if (history.some(item => item.rawInput.trim() === inputSql.trim())) {
+
+    const added = saveToHistory(inputSql, parseResult.formattedSql, dialect);
+    if (added) {
+      triggerToast("Saved query to history");
+    } else {
       triggerToast("Query already in history");
-      return;
     }
-
-    const newItem: HistoryItem = {
-      id: Date.now().toString(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      dialect,
-      rawInput: inputSql,
-      formattedOutput: parseResult.formattedSql
-    };
-
-    const updated = [newItem, ...history].slice(0, 30); // Keep top 30
-    setHistory(updated);
-    localStorage.setItem("sql_formatter_history", JSON.stringify(updated));
-    triggerToast("Saved query to history");
   };
 
   // Load item from history
@@ -307,18 +238,14 @@ function App() {
   };
 
   // Delete item from history
-  const handleDeleteHistoryItem = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const updated = history.filter(item => item.id !== id);
-    setHistory(updated);
-    localStorage.setItem("sql_formatter_history", JSON.stringify(updated));
+  const handleDeleteHistoryItem = (id: string) => {
+    deleteHistoryItem(id);
     triggerToast("Deleted history item");
   };
 
   // Clear all history
   const handleClearHistory = () => {
-    setHistory([]);
-    localStorage.removeItem("sql_formatter_history");
+    clearHistory();
     triggerToast("History cleared");
   };
 
@@ -349,17 +276,18 @@ function App() {
     const tokens = sql.split(tokenRegex);
 
     return tokens.map((token, i) => {
-      if (!token) return null;
-
-      // 1. Comments
+      // 1. Whitespace or Comments
+      if (/^\s+$/.test(token)) {
+        return token;
+      }
       if (token.startsWith("--") || token.startsWith("/*")) {
-        return <span key={i} className="text-zinc-500 italic font-light">{token}</span>;
+        return <span key={i} className="text-zinc-600 italic select-none">{token}</span>;
       }
-      // 2. Strings
-      if (token.startsWith("'") || token.startsWith("N'")) {
-        return <span key={i} className="text-emerald-400 font-normal">{token}</span>;
+      // 2. String Literals
+      if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith("N'") && token.endsWith("'"))) {
+        return <span key={i} className="text-emerald-400 font-mono break-all">{token}</span>;
       }
-      // 3. Bracketed columns or double quoted string
+      // 3. Brackets/Identifiers
       if ((token.startsWith("[") && token.endsWith("]")) || (token.startsWith('"') && token.endsWith('"'))) {
         return <span key={i} className="text-cyan-400 font-semibold">{token}</span>;
       }
@@ -371,14 +299,13 @@ function App() {
       if (token.startsWith("@") || token.startsWith("$")) {
         const activeParam = hoveredParam || focusedParam;
         const isActive = token.toLowerCase() === activeParam?.toLowerCase();
-        
+
         // For raw input, do not render interactive pills with padding/borders/events
         // as it breaks the alignment and text selection of the underlying textarea.
-        // Instead, just render it as a simple colored span!
         if (!substitute) {
           return (
-            <span 
-              key={i} 
+            <span
+              key={i}
               data-raw-param-token={token}
               className={`transition-colors duration-150 ${
                 isActive ? "text-amber-300 bg-amber-500/20 font-semibold rounded-sm" : "text-amber-400"
@@ -398,8 +325,8 @@ function App() {
         }
 
         return (
-          <span 
-            key={i} 
+          <span
+            key={i}
             data-formatted-param-token={token}
             className={`transition-all duration-200 px-1 py-0.5 rounded font-mono font-medium ${
               isActive
@@ -407,7 +334,7 @@ function App() {
                 : "bg-amber-500/10 border border-amber-500/20 text-amber-455 hover:bg-amber-500/20 cursor-pointer"
             }`}
             onClick={(e) => {
-              e.stopPropagation(); // Avoid triggering parent div click
+              e.stopPropagation();
               const inputEl = document.querySelector(`input[data-param-input="${token}"]`) as HTMLInputElement;
               if (inputEl) {
                 inputEl.focus();
@@ -419,16 +346,13 @@ function App() {
           </span>
         );
       }
-      // 6. Numbers
+      // 6. Default (Numbers, Operators, identifiers)
       if (/^[0-9]+(?:\.[0-9]+)?$/.test(token)) {
-        return <span key={i} className="text-violet-400">{token}</span>;
+        return <span key={i} className="text-amber-500 font-mono">{token}</span>;
       }
-      // 7. Operators / Separators
-      if (/[<>!=+\-*/%,.()]/ .test(token)) {
-        return <span key={i} className="text-zinc-500 font-light">{token}</span>;
+      if (/^[<>!=]+$/.test(token)) {
+        return <span key={i} className="text-zinc-400 font-semibold">{token}</span>;
       }
-
-      // Default text
       return <span key={i} className="text-zinc-300">{token}</span>;
     });
   };
@@ -436,14 +360,14 @@ function App() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100 selection:bg-blue-600/30 selection:text-blue-100">
       
-      {/* 1. LEFT PANEL: Configurations, Parameters & History */}
+      {/* 1. LEFT SIDEBAR CONTAINER */}
       <aside className="w-80 border-r border-zinc-800 bg-zinc-900/50 flex flex-col h-full shrink-0">
         
         {/* Logo / App Branding */}
         <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.15)]">
-              <Database size={18} weight="bold" />
+              <Database size={18} />
             </div>
             <div>
               <h1 className="text-sm font-semibold tracking-tight text-zinc-100">SQL Formatter</h1>
@@ -455,202 +379,30 @@ function App() {
           </div>
         </div>
 
-        {/* Configurations Section */}
-        <div className="p-4 border-b border-zinc-800 flex flex-col gap-3">
-          <div className="flex items-center gap-1.5 text-zinc-400 text-xs font-semibold uppercase tracking-wider">
-            <Gear size={14} />
-            <span>Formatter Settings</span>
-          </div>
-
-          {/* Indent option */}
-          <div className="flex flex-col gap-1 text-xs">
-            <label className="text-zinc-500">Indentation</label>
-            <select 
-              value={config.tabWidth}
-              onChange={(e) => setConfig({ ...config, tabWidth: parseInt(e.target.value) })}
-              className="bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-300 focus:outline-none focus:border-blue-500/60"
-            >
-              <option value={2}>2 Spaces</option>
-              <option value={4}>4 Spaces</option>
-            </select>
-          </div>
-
-          {/* Keyword casing option */}
-          <div className="flex flex-col gap-1 text-xs">
-            <label className="text-zinc-500">Keyword Casing</label>
-            <select 
-              value={config.keywordCase}
-              onChange={(e) => setConfig({ ...config, keywordCase: e.target.value as any })}
-              className="bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-300 focus:outline-none focus:border-blue-500/60"
-            >
-              <option value="upper">UPPERCASE</option>
-              <option value="lower">lowercase</option>
-              <option value="preserve">Preserve Casing</option>
-            </select>
-          </div>
-
-          {/* Operator layout option */}
-          <div className="flex flex-col gap-1 text-xs">
-            <label className="text-zinc-500">Newline on Logical Operators</label>
-            <select 
-              value={config.logicalOperatorNewline}
-              onChange={(e) => setConfig({ ...config, logicalOperatorNewline: e.target.value as any })}
-              className="bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-300 focus:outline-none focus:border-blue-500/60"
-            >
-              <option value="before">Before operator (AND / OR)</option>
-              <option value="after">After operator</option>
-            </select>
-          </div>
-        </div>
+        {/* Settings Panel */}
+        <SettingsPanel config={config} onChange={setConfig} />
 
         {/* Scrollable list: Parameters & History */}
         <div className="flex-1 overflow-y-auto flex flex-col divide-y divide-zinc-800">
           
-          {/* Substituted Parameters Info */}
-          {parseResult && parseResult.success && parseResult.parameters.length > 0 && (() => {
-            const filteredParams = parseResult.parameters.filter(p => 
-              p.name.toLowerCase().includes(paramSearchQuery.toLowerCase()) || 
-              p.value.toLowerCase().includes(paramSearchQuery.toLowerCase())
-            );
+          {/* Substituted Parameters */}
+          {parseResult && parseResult.success && parseResult.parameters.length > 0 && (
+            <ParametersPanel
+              parameters={parseResult.parameters}
+              paramOverrides={paramOverrides}
+              onParamValueChange={handleParamValueChange}
+              setHoveredParam={setHoveredParam}
+              setFocusedParam={setFocusedParam}
+            />
+          )}
 
-            return (
-              <div className="p-4 flex flex-col gap-2.5">
-                <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkle size={14} className="text-amber-400" />
-                    <span>Substituted Params</span>
-                  </div>
-                  <span className="bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                    {parseResult.parameters.length}
-                  </span>
-                </div>
-
-                {/* Parameter search bar */}
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={paramSearchQuery}
-                    onChange={(e) => setParamSearchQuery(e.target.value)}
-                    placeholder="Search params or values..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 pl-8 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500/60 font-sans"
-                  />
-                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500">
-                    <MagnifyingGlass size={14} />
-                  </div>
-                  {paramSearchQuery && (
-                    <button
-                      onClick={() => setParamSearchQuery("")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Editable parameter list */}
-                <div className="flex flex-col gap-1.5 max-h-[360px] overflow-y-auto pr-1">
-                  {filteredParams.length === 0 ? (
-                    <div className="text-center py-4 text-xs text-zinc-650 font-sans">No matches found</div>
-                  ) : (
-                    filteredParams.map((param, index) => (
-                      <div 
-                        key={index} 
-                        className="flex flex-col bg-zinc-900/60 border border-zinc-800/60 hover:border-zinc-700/60 rounded p-2 text-xs font-mono transition-all duration-150 cursor-pointer"
-                        onMouseEnter={() => setHoveredParam(param.name)}
-                        onMouseLeave={() => setHoveredParam(null)}
-                        onClick={() => {
-                          const inputEl = document.querySelector(`input[data-param-input="${param.name}"]`) as HTMLInputElement;
-                          if (inputEl) {
-                            inputEl.focus();
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between text-[11px] mb-1">
-                          <span className="text-amber-455 font-medium">{param.name}</span>
-                          {param.type && <span className="text-zinc-550 font-mono text-[9px]">{param.type}</span>}
-                        </div>
-                        <input
-                          type="text"
-                          value={paramOverrides[param.name] ?? param.value}
-                          data-param-input={param.name}
-                          onChange={(e) => handleParamValueChange(param.name, e.target.value)}
-                          onFocus={() => {
-                            setFocusedParam(param.name);
-                            const element = document.querySelector(`[data-formatted-param-token="${param.name}"]`);
-                            if (element) {
-                              element.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                            }
-                          }}
-                          onBlur={() => setFocusedParam(null)}
-                          className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-300 text-[11px] font-mono focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
-                          placeholder="value"
-                        />
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Query History */}
-          <div className="p-4 flex flex-col gap-2.5 flex-1 min-h-[160px]">
-            <div className="flex items-center justify-between text-zinc-400 text-xs font-semibold uppercase tracking-wider">
-              <div className="flex items-center gap-1.5">
-                <ClockCounterClockwise size={14} />
-                <span>Recent Queries</span>
-              </div>
-              {history.length > 0 && (
-                <button 
-                  onClick={handleClearHistory}
-                  className="text-[10px] text-zinc-500 hover:text-red-400 flex items-center gap-0.5 transition-colors cursor-pointer"
-                >
-                  <Trash size={12} />
-                  <span>Clear</span>
-                </button>
-              )}
-            </div>
-
-            {history.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center text-zinc-600 text-xs py-8">
-                <ClipboardText size={24} className="opacity-40 mb-2" />
-                <p>No queries in history yet</p>
-                <p className="text-[10px] text-zinc-700 mt-0.5">They will appear here when saved</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
-                <AnimatePresence initial={false}>
-                  {history.map((item) => (
-                    <motion.div
-                      key={item.id}
-                      initial={{ opacity: 0, y: -8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, x: -100 }}
-                      className="group flex items-start gap-2 bg-zinc-900/40 border border-zinc-850 hover:border-zinc-750 rounded p-2 text-xs font-mono text-left cursor-pointer transition-colors hover:bg-zinc-900"
-                      onClick={() => handleLoadHistory(item)}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between text-[9px] text-zinc-500 mb-1">
-                          <span className="font-semibold text-zinc-400">{item.dialect === "mssql" ? "MS SQL" : "Postgres"}</span>
-                          <span>{item.timestamp}</span>
-                        </div>
-                        <div className="text-[11px] text-zinc-300 truncate font-mono">
-                          {item.rawInput}
-                        </div>
-                      </div>
-                      <button
-                        onClick={(e) => handleDeleteHistoryItem(item.id, e)}
-                        className="opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-red-400 p-0.5 rounded transition-opacity cursor-pointer"
-                        title="Remove from history"
-                      >
-                        <Trash size={12} />
-                      </button>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
-            )}
-          </div>
+          {/* History Panel */}
+          <HistoryPanel
+            history={history}
+            onLoadHistory={handleLoadHistory}
+            onDeleteHistoryItem={handleDeleteHistoryItem}
+            onClearHistory={handleClearHistory}
+          />
         </div>
       </aside>
 
@@ -659,8 +411,6 @@ function App() {
         
         {/* Workspace Top Bar */}
         <header className="h-14 border-b border-zinc-800 px-6 flex items-center justify-between shrink-0">
-          
-          {/* Dialect Switcher pills */}
           <div className="flex bg-zinc-900 p-0.5 rounded-lg border border-zinc-800">
             <button
               onClick={() => setDialect("mssql")}
@@ -683,184 +433,39 @@ function App() {
               PostgreSQL
             </button>
           </div>
-
-
         </header>
 
         {/* Split pane for raw query and formatted result */}
         <section className="flex-1 flex overflow-hidden min-h-0 min-w-0">
           
-          {/* A. Left Editor: Raw Input */}
-          <div className="flex-1 basis-1/2 border-r border-zinc-800 flex flex-col h-full min-w-0">
-            <div className="p-3 bg-zinc-900/20 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-500 uppercase font-mono">
-              <div className="flex items-center gap-1.5">
-                <Terminal size={14} />
-                <span>Raw Parameterized SQL Input</span>
-              </div>
-              <div className="flex items-center gap-3 normal-case text-zinc-400">
-                <button
-                  onClick={handlePaste}
-                  className="hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
-                >
-                  <ClipboardText size={14} />
-                  <span>Paste</span>
-                </button>
-                {inputSql && (
-                  <button
-                    onClick={() => {
-                      setInputSql("");
-                      triggerToast("Cleared input");
-                    }}
-                    className="hover:text-zinc-200 flex items-center gap-1 cursor-pointer border-l border-zinc-800 pl-3"
-                  >
-                    <Eraser size={14} />
-                    <span>Clear</span>
-                  </button>
-                )}
-              </div>
-            </div>
-            
-            <div className="flex-1 relative overflow-hidden bg-zinc-950">
-              {inputSql && (
-                <pre
-                  ref={rawPreRef}
-                  className="absolute inset-0 w-full h-full p-4 bg-transparent text-zinc-300 font-mono text-xs leading-relaxed pointer-events-none whitespace-pre-wrap break-all overflow-hidden"
-                  aria-hidden="true"
-                >
-                  {renderHighlightedSql(inputSql, false)}
-                </pre>
-              )}
-              
-              <textarea
-                ref={rawTextareaRef}
-                value={inputSql}
-                onChange={(e) => setInputSql(e.target.value)}
-                onPaste={() => {
-                  shouldAutoSaveRef.current = true;
-                }}
-                onScroll={(e) => {
-                  if (rawPreRef.current) {
-                    rawPreRef.current.scrollTop = e.currentTarget.scrollTop;
-                    rawPreRef.current.scrollLeft = e.currentTarget.scrollLeft;
-                  }
-                }}
-                placeholder={
-                  dialect === "mssql" 
-                    ? "Paste MS SQL query logs here...\ne.g. exec sp_executesql N'SELECT * FROM Table WHERE id = @p1', N'@p1 int', @p1=10"
-                    : "Paste PostgreSQL parameterized statement logs here...\ne.g. SELECT * FROM users WHERE status = $1;\n-- Parameters: $1 = 'active'"
-                }
-                className={`absolute inset-0 w-full h-full p-4 bg-transparent font-mono text-xs border-0 focus:outline-none focus:ring-0 resize-none leading-relaxed placeholder-zinc-700 whitespace-pre-wrap break-all overflow-y-auto ${
-                  inputSql ? "text-transparent caret-zinc-100 selection:bg-blue-600/30" : "text-zinc-100"
-                }`}
-              />
-              
-              {!inputSql && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-20">
-                  <Database size={48} className="mb-2" />
-                  <span className="text-xs">Paste or Drag Query File Here</span>
-                </div>
-              )}
-            </div>
+          {/* Raw SQL Editor */}
+          <RawSqlEditor
+            inputSql={inputSql}
+            setInputSql={setInputSql}
+            dialect={dialect}
+            rawPreRef={rawPreRef}
+            rawTextareaRef={rawTextareaRef}
+            onPasteClick={handlePasteClick}
+            renderHighlightedSql={renderHighlightedSql}
+            triggerToast={triggerToast}
+          />
 
-
-          </div>
-
-          {/* B. Right Editor: Formatted & Substituted Output */}
-          <div className="flex-1 basis-1/2 flex flex-col h-full min-w-0 bg-zinc-900/10">
-            <div className="p-3 bg-zinc-900/20 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-500 uppercase font-mono">
-              <div className="flex items-center gap-1.5">
-                <FileText size={14} />
-                <span>Formatted Query Output</span>
-              </div>
-              {parseResult && parseResult.success && (
-                <button
-                  onClick={handleSaveToHistory}
-                  className="hover:text-zinc-300 flex items-center gap-1 cursor-pointer"
-                  title="Save to history"
-                >
-                  <ClockCounterClockwise size={12} />
-                  <span>Save</span>
-                </button>
-              )}
-            </div>
-
-            <div className="flex-1 p-4 overflow-auto bg-zinc-950 font-mono text-xs select-text whitespace-pre leading-relaxed border-0 relative">
-              {parseResult ? (
-                parseResult.success ? (
-                  <code className="block select-text font-mono">
-                    {renderHighlightedSql(parseResult.formattedTemplateSql || parseResult.formattedSql, true)}
-                  </code>
-                ) : (
-                  <div className="text-red-400 font-mono p-2 border border-red-900/50 bg-red-950/20 rounded">
-                    <span className="font-semibold text-xs block mb-1">Parsing Error:</span>
-                    <span className="text-[11px] block">{parseResult.error}</span>
-                  </div>
-                )
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-zinc-700 text-xs font-sans pointer-events-none">
-                  <ArrowsClockwise size={32} className="opacity-40 animate-pulse mb-2" />
-                  <span>Waiting for query input...</span>
-                </div>
-              )}
-
-              {/* Action overlay buttons when output exists */}
-              {parseResult && parseResult.success && (
-                <div className="absolute top-4 right-4 flex items-center gap-2">
-                  {/* Download */}
-                  <button
-                    onClick={handleDownload}
-                    className="w-8 h-8 rounded-md bg-zinc-900/80 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850 flex items-center justify-center transition-all cursor-pointer"
-                    title="Download SQL"
-                  >
-                    <Download size={14} />
-                  </button>
-                  {/* Copy */}
-                  <button
-                    onClick={handleCopy}
-                    className={`h-8 px-3 text-xs rounded-md border flex items-center gap-1.5 transition-all cursor-pointer ${
-                      copySuccess
-                        ? "bg-emerald-600/20 border-emerald-500/50 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.1)]"
-                        : "bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:text-zinc-100 hover:bg-zinc-850"
-                    }`}
-                  >
-                    {copySuccess ? <Check size={14} weight="bold" /> : <Copy size={14} />}
-                    <span>{copySuccess ? "Copied" : "Copy"}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Output stats footer */}
-            <div className="p-3 border-t border-zinc-800 bg-zinc-900/20 flex items-center justify-between text-[11px] font-mono text-zinc-500">
-              <div className="flex items-center gap-4">
-                <span>Dialect: <strong className="text-zinc-400">{dialect === "mssql" ? "MS SQL" : "Postgres"}</strong></span>
-                {parseResult?.success && (
-                  <span>Substituted: <strong className="text-zinc-400">{stats.paramCount} params</strong></span>
-                )}
-              </div>
-              {parseResult?.success && (
-                <span>Time: <strong className="text-zinc-400">{stats.timeMs}ms</strong></span>
-              )}
-            </div>
-          </div>
+          {/* Formatted SQL Viewer */}
+          <FormattedSqlViewer
+            parseResult={parseResult}
+            renderHighlightedSql={renderHighlightedSql}
+            onSaveToHistory={handleSaveToHistory}
+            onDownload={handleDownload}
+            onCopy={handleCopy}
+            copySuccess={copySuccess}
+            dialect={dialect}
+            stats={stats}
+          />
         </section>
       </main>
 
-      {/* Global micro-toast notification overlay */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: 32, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 350, damping: 25 }}
-            className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs px-3.5 py-2.5 rounded-lg shadow-xl shadow-black/50"
-          >
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-            <span>{toastMessage}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Toast Notification */}
+      <Toast message={toastMessage} />
     </div>
   );
 }
