@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Database } from "lucide-react";
+import { Database, Columns, Rows } from "lucide-react";
 import { formatAndSubstituteQuery, FormatConfig, ParseResult } from "./utils/sqlParser";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryHistory, HistoryItem } from "./hooks/useQueryHistory";
@@ -12,6 +12,7 @@ import { Toast } from "./components/Toast";
 
 function App() {
   const [dialect, setDialect] = useState<"mssql" | "postgres">("mssql");
+  const [panelOrientation, setPanelOrientation] = useState<"vertical" | "horizontal">("vertical");
   const [inputSql, setInputSql] = useState("");
   const [config, setConfig] = useState<FormatConfig>({
     tabWidth: 2,
@@ -433,10 +434,38 @@ function App() {
               PostgreSQL
             </button>
           </div>
+
+          {/* Panel Orientation Switcher */}
+          <div className="flex bg-zinc-900 p-0.5 rounded-lg border border-zinc-800">
+            <button
+              onClick={() => setPanelOrientation("vertical")}
+              className={`p-1.5 rounded-md transition-all cursor-pointer flex items-center justify-center ${
+                panelOrientation === "vertical"
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700/50 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+              title="Side-by-Side (Columns)"
+            >
+              <Columns size={15} />
+            </button>
+            <button
+              onClick={() => setPanelOrientation("horizontal")}
+              className={`p-1.5 rounded-md transition-all cursor-pointer flex items-center justify-center ${
+                panelOrientation === "horizontal"
+                  ? "bg-zinc-800 text-zinc-100 border border-zinc-700/50 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+              title="Top-and-Bottom (Rows)"
+            >
+              <Rows size={15} />
+            </button>
+          </div>
         </header>
 
         {/* Split pane for raw query and formatted result */}
-        <section className="flex-1 flex overflow-hidden min-h-0 min-w-0">
+        <section className={`flex-1 flex overflow-hidden min-h-0 min-w-0 ${
+          panelOrientation === "vertical" ? "flex-row" : "flex-col"
+        }`}>
           
           {/* Raw SQL Editor */}
           <RawSqlEditor
@@ -448,6 +477,7 @@ function App() {
             onPasteClick={handlePasteClick}
             renderHighlightedSql={renderHighlightedSql}
             triggerToast={triggerToast}
+            panelOrientation={panelOrientation}
           />
 
           {/* Formatted SQL Viewer */}

@@ -10,6 +10,7 @@ interface RawSqlEditorProps {
   onPasteClick: () => void;
   renderHighlightedSql: (sql: string, substitute: boolean) => React.ReactNode;
   triggerToast: (msg: string) => void;
+  panelOrientation?: "vertical" | "horizontal";
 }
 
 export const RawSqlEditor: React.FC<RawSqlEditorProps> = ({
@@ -21,9 +22,12 @@ export const RawSqlEditor: React.FC<RawSqlEditorProps> = ({
   onPasteClick,
   renderHighlightedSql,
   triggerToast,
+  panelOrientation = "vertical",
 }) => {
   return (
-    <div className="flex-1 basis-1/2 border-r border-zinc-800 flex flex-col h-full min-w-0">
+    <div className={`flex-1 basis-1/2 flex flex-col min-w-0 min-h-0 ${
+      panelOrientation === "vertical" ? "border-r border-zinc-800" : "border-b border-zinc-800"
+    }`}>
       <div className="p-3 bg-zinc-900/20 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-500 uppercase font-mono">
         <div className="flex items-center gap-1.5">
           <Terminal size={14} />

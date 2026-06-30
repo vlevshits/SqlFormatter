@@ -34,7 +34,7 @@ export const FormattedSqlViewer: React.FC<FormattedSqlViewerProps> = ({
   stats,
 }) => {
   return (
-    <div className="flex-1 basis-1/2 flex flex-col h-full min-w-0 bg-zinc-900/10">
+    <div className="flex-1 basis-1/2 flex flex-col min-w-0 min-h-0 bg-zinc-900/10">
       <div className="p-3 bg-zinc-900/20 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-500 uppercase font-mono">
         <div className="flex items-center gap-1.5">
           <FileText size={14} />
