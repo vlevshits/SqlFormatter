@@ -57,6 +57,7 @@ function App() {
   // Refs for auto-saving behavior and raw editor scroll syncing
   const shouldAutoSaveRef = useRef(false);
   const rawPreRef = useRef<HTMLPreElement>(null);
+  const rawTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Load history from localStorage on startup
   useEffect(() => {
@@ -84,6 +85,17 @@ function App() {
     setParamOverrides({});
     setParamSearchQuery("");
   }, [inputSql, dialect]);
+
+  // Sync scroll positions when inputSql changes (e.g. on paste or load from history)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (rawPreRef.current && rawTextareaRef.current) {
+        rawPreRef.current.scrollTop = rawTextareaRef.current.scrollTop;
+        rawPreRef.current.scrollLeft = rawTextareaRef.current.scrollLeft;
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [inputSql]);
 
   // Format the SQL whenever input, dialect, configs, or paramOverrides change
   useEffect(() => {
@@ -582,7 +594,7 @@ function App() {
       </aside>
 
       {/* 2. RIGHT / MAIN WORKSPACE */}
-      <main className="flex-1 flex flex-col h-full bg-zinc-950">
+      <main className="flex-1 flex flex-col h-full bg-zinc-950 min-w-0">
         
         {/* Workspace Top Bar */}
         <header className="h-14 border-b border-zinc-800 px-6 flex items-center justify-between shrink-0">
@@ -615,10 +627,10 @@ function App() {
         </header>
 
         {/* Split pane for raw query and formatted result */}
-        <section className="flex-1 flex overflow-hidden min-h-0">
+        <section className="flex-1 flex overflow-hidden min-h-0 min-w-0">
           
           {/* A. Left Editor: Raw Input */}
-          <div className="flex-1 border-r border-zinc-800 flex flex-col h-full min-w-[280px]">
+          <div className="flex-1 basis-1/2 border-r border-zinc-800 flex flex-col h-full min-w-0">
             <div className="p-3 bg-zinc-900/20 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-500 uppercase font-mono">
               <div className="flex items-center gap-1.5">
                 <Terminal size={14} />
@@ -651,7 +663,7 @@ function App() {
               {inputSql && (
                 <pre
                   ref={rawPreRef}
-                  className="absolute inset-0 w-full h-full p-4 bg-transparent text-zinc-300 font-mono text-xs leading-relaxed pointer-events-none whitespace-pre-wrap break-all overflow-y-auto"
+                  className="absolute inset-0 w-full h-full p-4 bg-transparent text-zinc-300 font-mono text-xs leading-relaxed pointer-events-none whitespace-pre-wrap break-all overflow-hidden"
                   aria-hidden="true"
                 >
                   {renderHighlightedSql(inputSql, false)}
@@ -659,6 +671,7 @@ function App() {
               )}
               
               <textarea
+                ref={rawTextareaRef}
                 value={inputSql}
                 onChange={(e) => setInputSql(e.target.value)}
                 onPaste={() => {
@@ -692,7 +705,7 @@ function App() {
           </div>
 
           {/* B. Right Editor: Formatted & Substituted Output */}
-          <div className="flex-1 flex flex-col h-full min-w-[280px] bg-zinc-900/10">
+          <div className="flex-1 basis-1/2 flex flex-col h-full min-w-0 bg-zinc-900/10">
             <div className="p-3 bg-zinc-900/20 border-b border-zinc-800 flex items-center justify-between text-xs text-zinc-500 uppercase font-mono">
               <div className="flex items-center gap-1.5">
                 <FileText size={14} />
