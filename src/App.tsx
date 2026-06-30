@@ -81,6 +81,53 @@ function App() {
     return () => document.removeEventListener("contextmenu", handleContextMenu, { capture: true });
   }, []);
 
+  // Global keydown handler to intercept Cmd+V / Ctrl+V and append to raw SQL
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      const isPaste = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v";
+      if (!isPaste) return;
+
+      const activeEl = document.activeElement;
+      const isInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA");
+
+      // If focusing settings or search or parameter inputs, let default paste happen
+      if (isInput && activeEl.tagName === "INPUT") {
+        return;
+      }
+
+      e.preventDefault();
+
+      try {
+        const text = await invoke<string>("read_clipboard");
+        if (text) {
+          shouldAutoSaveRef.current = true;
+          setInputSql((prev) => {
+            const separator = prev.trim() ? "\n\n" : "";
+            return prev + separator + text;
+          });
+          triggerToast("Appended query from clipboard");
+        }
+      } catch (err) {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            shouldAutoSaveRef.current = true;
+            setInputSql((prev) => {
+              const separator = prev.trim() ? "\n\n" : "";
+              return prev + separator + text;
+            });
+            triggerToast("Appended query from clipboard");
+          }
+        } catch (e) {
+          triggerToast("Unable to read clipboard");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Clear overrides and search query when inputSql or dialect changes
   useEffect(() => {
     setParamOverrides({});
