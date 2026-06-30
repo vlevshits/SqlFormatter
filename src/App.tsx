@@ -18,6 +18,7 @@ import {
   X
 } from "@phosphor-icons/react";
 import { formatAndSubstituteQuery, FormatConfig, ParseResult } from "./utils/sqlParser";
+import { invoke } from "@tauri-apps/api/core";
 
 
 
@@ -186,7 +187,8 @@ function App() {
   // Paste from clipboard
   const handlePaste = async () => {
     try {
-      const text = await navigator.clipboard.readText();
+      // Use Tauri command to read from clipboard to bypass WebKit permission popups
+      const text = await invoke<string>("read_clipboard");
       if (text) {
         shouldAutoSaveRef.current = true;
         setInputSql(text);
@@ -195,7 +197,19 @@ function App() {
         triggerToast("Clipboard is empty");
       }
     } catch (err) {
-      triggerToast("Unable to read clipboard");
+      // Fallback to browser clipboard if Tauri command fails or in browser dev environment
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          shouldAutoSaveRef.current = true;
+          setInputSql(text);
+          triggerToast("Pasted query from clipboard");
+        } else {
+          triggerToast("Clipboard is empty");
+        }
+      } catch (e) {
+        triggerToast("Unable to read clipboard");
+      }
     }
   };
 
