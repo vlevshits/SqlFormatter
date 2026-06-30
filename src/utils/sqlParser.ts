@@ -11,6 +11,7 @@ export interface ParseResult {
   rawSql: string;
   substitutedSql: string;
   formattedSql: string;
+  formattedTemplateSql?: string;
   dialect: "mssql" | "postgres";
   parameters: Parameter[];
   error?: string;
@@ -483,7 +484,8 @@ export function substitutePostgresParameters(sqlTemplate: string, assignments: R
 export function formatAndSubstituteQuery(
   input: string,
   dialect: "mssql" | "postgres",
-  config: FormatConfig
+  config: FormatConfig,
+  paramOverrides?: Record<string, string>
 ): ParseResult {
   const trimmedInput = input.trim();
   if (!trimmedInput) {
@@ -512,15 +514,28 @@ export function formatAndSubstituteQuery(
         // Parse declarations to get types
         const types = parseMssqlDeclarations(paramDeclarations);
         
+        // Apply overrides
+        const finalParamValues = { ...paramValues };
+        if (paramOverrides) {
+          for (const [name, val] of Object.entries(paramOverrides)) {
+            const matchKey = Object.keys(finalParamValues).find(
+              (k) => k.toLowerCase() === name.toLowerCase()
+            );
+            if (matchKey) {
+              finalParamValues[matchKey] = val;
+            }
+          }
+        }
+
         // Build parameters list
-        parameters = Object.keys(paramValues).map((name) => ({
+        parameters = Object.keys(finalParamValues).map((name) => ({
           name,
           type: types[name] || undefined,
-          value: paramValues[name]
+          value: finalParamValues[name]
         }));
 
         // Substitute
-        substitutedSql = substituteMssqlParameters(sqlTemplate, paramValues);
+        substitutedSql = substituteMssqlParameters(sqlTemplate, finalParamValues);
       } else {
         // If not executesql, format raw
         sqlTemplate = trimmedInput;
@@ -531,13 +546,23 @@ export function formatAndSubstituteQuery(
       const { sqlTemplate: template, paramValues } = parsePostgresQuery(trimmedInput);
       sqlTemplate = template;
 
-      parameters = Object.keys(paramValues).map((name) => ({
+      // Apply overrides
+      const finalParamValues = { ...paramValues };
+      if (paramOverrides) {
+        for (const [name, val] of Object.entries(paramOverrides)) {
+          if (name in finalParamValues) {
+            finalParamValues[name] = val;
+          }
+        }
+      }
+
+      parameters = Object.keys(finalParamValues).map((name) => ({
         name,
-        value: paramValues[name]
+        value: finalParamValues[name]
       }));
 
       // Substitute
-      substitutedSql = substitutePostgresParameters(sqlTemplate, paramValues);
+      substitutedSql = substitutePostgresParameters(sqlTemplate, finalParamValues);
     }
 
     // Format the substituted SQL using sql-formatter
@@ -551,11 +576,19 @@ export function formatAndSubstituteQuery(
       logicalOperatorNewline: config.logicalOperatorNewline
     });
 
+    const formattedTemplateSql = format(sqlTemplate, {
+      language: formatterLanguage,
+      tabWidth: config.tabWidth,
+      keywordCase: config.keywordCase,
+      logicalOperatorNewline: config.logicalOperatorNewline
+    });
+
     return {
       success: true,
       rawSql: sqlTemplate,
       substitutedSql,
       formattedSql,
+      formattedTemplateSql,
       dialect,
       parameters
     };

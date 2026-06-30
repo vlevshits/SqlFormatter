@@ -82,6 +82,11 @@
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden; /* Prevent default page scroll, we'll scroll inside panels */
   }
+
+  /* Suppress WebKit native callout selection menus globally */
+  * {
+    -webkit-touch-callout: none;
+  }
 }
 
 /* Custom scrollbars for dark theme */

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Database, 
@@ -13,7 +13,9 @@ import {
   Gear,
   Download,
   Terminal,
-  Eraser
+  Eraser,
+  MagnifyingGlass,
+  X
 } from "@phosphor-icons/react";
 import { formatAndSubstituteQuery, FormatConfig, ParseResult } from "./utils/sqlParser";
 
@@ -46,6 +48,16 @@ function App() {
     paramCount: 0
   });
 
+  // State variables for parameter overrides, search filtering, and interactions
+  const [paramOverrides, setParamOverrides] = useState<Record<string, string>>({});
+  const [paramSearchQuery, setParamSearchQuery] = useState("");
+  const [hoveredParam, setHoveredParam] = useState<string | null>(null);
+  const [focusedParam, setFocusedParam] = useState<string | null>(null);
+
+  // Refs for auto-saving behavior and raw editor scroll syncing
+  const shouldAutoSaveRef = useRef(false);
+  const rawPreRef = useRef<HTMLPreElement>(null);
+
   // Load history from localStorage on startup
   useEffect(() => {
     const saved = localStorage.getItem("sql_formatter_history");
@@ -58,7 +70,22 @@ function App() {
     }
   }, []);
 
-  // Format the SQL whenever input, dialect, or configs change
+  // Disable default browser context menu globally to prevent native popups
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", handleContextMenu, { capture: true });
+    return () => document.removeEventListener("contextmenu", handleContextMenu, { capture: true });
+  }, []);
+
+  // Clear overrides and search query when inputSql or dialect changes
+  useEffect(() => {
+    setParamOverrides({});
+    setParamSearchQuery("");
+  }, [inputSql, dialect]);
+
+  // Format the SQL whenever input, dialect, configs, or paramOverrides change
   useEffect(() => {
     if (!inputSql.trim()) {
       setParseResult(null);
@@ -67,7 +94,7 @@ function App() {
     }
 
     const start = performance.now();
-    const result = formatAndSubstituteQuery(inputSql, dialect, config);
+    const result = formatAndSubstituteQuery(inputSql, dialect, config, paramOverrides);
     const end = performance.now();
 
     setParseResult(result);
@@ -83,7 +110,45 @@ function App() {
     } else {
       setStats({ timeMs: 0, charReduction: 0, paramCount: 0 });
     }
-  }, [inputSql, dialect, config]);
+  }, [inputSql, dialect, config, paramOverrides]);
+
+  // Helper to save history item directly (and ensure we don't save duplicates)
+  const saveToHistoryDirectly = (raw: string, formatted: string, currentDialect: "mssql" | "postgres") => {
+    setHistory((prev) => {
+      if (prev.some((item) => item.rawInput.trim() === raw.trim())) return prev;
+      const newItem: HistoryItem = {
+        id: Date.now().toString(),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        dialect: currentDialect,
+        rawInput: raw,
+        formattedOutput: formatted,
+      };
+      const updated = [newItem, ...prev].slice(0, 30);
+      localStorage.setItem("sql_formatter_history", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  // Auto-Save Effect (immediate on paste, debounced on typing)
+  useEffect(() => {
+    if (!parseResult || !parseResult.success || !inputSql.trim()) return;
+
+    // Check if already in history
+    const exists = history.some(item => item.rawInput.trim() === inputSql.trim());
+    if (exists) return;
+
+    if (shouldAutoSaveRef.current) {
+      shouldAutoSaveRef.current = false;
+      saveToHistoryDirectly(inputSql, parseResult.formattedSql, dialect);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      saveToHistoryDirectly(inputSql, parseResult.formattedSql, dialect);
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [parseResult, inputSql, dialect, history]);
 
   // Show a temporary message toast
   const triggerToast = (msg: string) => {
@@ -111,6 +176,7 @@ function App() {
     try {
       const text = await navigator.clipboard.readText();
       if (text) {
+        shouldAutoSaveRef.current = true;
         setInputSql(text);
         triggerToast("Pasted query from clipboard");
       } else {
@@ -119,6 +185,21 @@ function App() {
     } catch (err) {
       triggerToast("Unable to read clipboard");
     }
+  };
+
+  // Handle parameter value change, update overrides, and scroll to position
+  const handleParamValueChange = (name: string, newValue: string) => {
+    setParamOverrides((prev) => ({
+      ...prev,
+      [name]: newValue,
+    }));
+    
+    setTimeout(() => {
+      const element = document.querySelector(`[data-formatted-param-token="${name}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }, 50);
   };
 
   // Save query to history
@@ -182,7 +263,7 @@ function App() {
   };
 
   // Custom SQL syntax highlighter
-  const renderHighlightedSql = (sql: string) => {
+  const renderHighlightedSql = (sql: string, substitute: boolean = false) => {
     const keywords = new Set([
       "SELECT", "FROM", "WHERE", "INNER", "JOIN", "LEFT", "OUTER", "RIGHT", "ON",
       "AND", "OR", "IN", "IS", "NULL", "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END",
@@ -191,7 +272,7 @@ function App() {
       "OFFSET", "VALUES", "CROSS", "APPLY", "HAVING"
     ]);
 
-    const tokenRegex = /(\s+|--.*|\/\*[\s\S]*?\*\/|N?'(?:''|[^'])*'|\[[^\]]+\]|"[^"]*"|[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+(?:\.[0-9]+)?|[<>!=]+|[-+*/%,.()@$])/g;
+    const tokenRegex = /(\s+|--.*|\/\*[\s\S]*?\*\/|N?'(?:''|[^'])*'|\[[^\]]+\]|"[^"]*"|@[a-zA-Z0-9_]+|\$[0-9]+|[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+(?:\.[0-9]+)?|[<>!=]+|[-+*/%,.()@$])/g;
     const tokens = sql.split(tokenRegex);
 
     return tokens.map((token, i) => {
@@ -215,7 +296,55 @@ function App() {
       }
       // 5. Parameters
       if (token.startsWith("@") || token.startsWith("$")) {
-        return <span key={i} className="text-amber-400 font-medium">{token}</span>;
+        const activeParam = hoveredParam || focusedParam;
+        const isActive = token.toLowerCase() === activeParam?.toLowerCase();
+        
+        // For raw input, do not render interactive pills with padding/borders/events
+        // as it breaks the alignment and text selection of the underlying textarea.
+        // Instead, just render it as a simple colored span!
+        if (!substitute) {
+          return (
+            <span 
+              key={i} 
+              data-raw-param-token={token}
+              className={`transition-colors duration-150 ${
+                isActive ? "text-amber-300 bg-amber-500/20 font-semibold rounded-sm" : "text-amber-400"
+              }`}
+            >
+              {token}
+            </span>
+          );
+        }
+
+        let displayValue = token;
+        if (substitute && parseResult && parseResult.success) {
+          const paramObj = parseResult.parameters.find(p => p.name.toLowerCase() === token.toLowerCase());
+          if (paramObj) {
+            displayValue = paramObj.value;
+          }
+        }
+
+        return (
+          <span 
+            key={i} 
+            data-formatted-param-token={token}
+            className={`transition-all duration-200 px-1 py-0.5 rounded font-mono font-medium ${
+              isActive
+                ? "bg-amber-500 text-zinc-950 font-bold shadow-[0_0_8px_rgba(245,158,11,0.6)] scale-105"
+                : "bg-amber-500/10 border border-amber-500/20 text-amber-455 hover:bg-amber-500/20 cursor-pointer"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation(); // Avoid triggering parent div click
+              const inputEl = document.querySelector(`input[data-param-input="${token}"]`) as HTMLInputElement;
+              if (inputEl) {
+                inputEl.focus();
+                inputEl.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+            }}
+          >
+            {displayValue}
+          </span>
+        );
       }
       // 6. Numbers
       if (/^[0-9]+(?:\.[0-9]+)?$/.test(token)) {
@@ -305,32 +434,91 @@ function App() {
         <div className="flex-1 overflow-y-auto flex flex-col divide-y divide-zinc-800">
           
           {/* Substituted Parameters Info */}
-          {parseResult && parseResult.success && parseResult.parameters.length > 0 && (
-            <div className="p-4 flex flex-col gap-2.5">
-              <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                <div className="flex items-center gap-1.5">
-                  <Sparkle size={14} className="text-amber-400" />
-                  <span>Substituted Params</span>
-                </div>
-                <span className="bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono text-[10px]">
-                  {parseResult.parameters.length}
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
-                {parseResult.parameters.map((param, index) => (
-                  <div key={index} className="flex flex-col bg-zinc-900/60 border border-zinc-800/60 rounded p-2 text-xs font-mono">
-                    <div className="flex items-center justify-between text-[11px] mb-1">
-                      <span className="text-amber-400 font-medium">{param.name}</span>
-                      {param.type && <span className="text-zinc-600">{param.type}</span>}
-                    </div>
-                    <div className="text-zinc-300 text-[10px] break-all max-h-16 overflow-y-auto bg-zinc-950/40 p-1 border border-zinc-800/40 rounded">
-                      {param.value}
-                    </div>
+          {parseResult && parseResult.success && parseResult.parameters.length > 0 && (() => {
+            const filteredParams = parseResult.parameters.filter(p => 
+              p.name.toLowerCase().includes(paramSearchQuery.toLowerCase()) || 
+              p.value.toLowerCase().includes(paramSearchQuery.toLowerCase())
+            );
+
+            return (
+              <div className="p-4 flex flex-col gap-2.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkle size={14} className="text-amber-400" />
+                    <span>Substituted Params</span>
                   </div>
-                ))}
+                  <span className="bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                    {parseResult.parameters.length}
+                  </span>
+                </div>
+
+                {/* Parameter search bar */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={paramSearchQuery}
+                    onChange={(e) => setParamSearchQuery(e.target.value)}
+                    placeholder="Search params or values..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-2.5 py-1.5 pl-8 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500/60 font-sans"
+                  />
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500">
+                    <MagnifyingGlass size={14} />
+                  </div>
+                  {paramSearchQuery && (
+                    <button
+                      onClick={() => setParamSearchQuery("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Editable parameter list */}
+                <div className="flex flex-col gap-1.5 max-h-[360px] overflow-y-auto pr-1">
+                  {filteredParams.length === 0 ? (
+                    <div className="text-center py-4 text-xs text-zinc-650 font-sans">No matches found</div>
+                  ) : (
+                    filteredParams.map((param, index) => (
+                      <div 
+                        key={index} 
+                        className="flex flex-col bg-zinc-900/60 border border-zinc-800/60 hover:border-zinc-700/60 rounded p-2 text-xs font-mono transition-all duration-150 cursor-pointer"
+                        onMouseEnter={() => setHoveredParam(param.name)}
+                        onMouseLeave={() => setHoveredParam(null)}
+                        onClick={() => {
+                          const inputEl = document.querySelector(`input[data-param-input="${param.name}"]`) as HTMLInputElement;
+                          if (inputEl) {
+                            inputEl.focus();
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-between text-[11px] mb-1">
+                          <span className="text-amber-455 font-medium">{param.name}</span>
+                          {param.type && <span className="text-zinc-550 font-mono text-[9px]">{param.type}</span>}
+                        </div>
+                        <input
+                          type="text"
+                          value={paramOverrides[param.name] ?? param.value}
+                          data-param-input={param.name}
+                          onChange={(e) => handleParamValueChange(param.name, e.target.value)}
+                          onFocus={() => {
+                            setFocusedParam(param.name);
+                            const element = document.querySelector(`[data-formatted-param-token="${param.name}"]`);
+                            if (element) {
+                              element.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                            }
+                          }}
+                          onBlur={() => setFocusedParam(null)}
+                          className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-300 text-[11px] font-mono focus:outline-none focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
+                          placeholder="value"
+                        />
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Query History */}
           <div className="p-4 flex flex-col gap-2.5 flex-1 min-h-[160px]">
@@ -459,16 +647,37 @@ function App() {
               </div>
             </div>
             
-            <div className="flex-1 relative">
+            <div className="flex-1 relative overflow-hidden bg-zinc-950">
+              {inputSql && (
+                <pre
+                  ref={rawPreRef}
+                  className="absolute inset-0 w-full h-full p-4 bg-transparent text-zinc-300 font-mono text-xs leading-relaxed pointer-events-none whitespace-pre-wrap break-all overflow-y-auto"
+                  aria-hidden="true"
+                >
+                  {renderHighlightedSql(inputSql, false)}
+                </pre>
+              )}
+              
               <textarea
                 value={inputSql}
                 onChange={(e) => setInputSql(e.target.value)}
+                onPaste={() => {
+                  shouldAutoSaveRef.current = true;
+                }}
+                onScroll={(e) => {
+                  if (rawPreRef.current) {
+                    rawPreRef.current.scrollTop = e.currentTarget.scrollTop;
+                    rawPreRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                  }
+                }}
                 placeholder={
                   dialect === "mssql" 
                     ? "Paste MS SQL query logs here...\ne.g. exec sp_executesql N'SELECT * FROM Table WHERE id = @p1', N'@p1 int', @p1=10"
                     : "Paste PostgreSQL parameterized statement logs here...\ne.g. SELECT * FROM users WHERE status = $1;\n-- Parameters: $1 = 'active'"
                 }
-                className="w-full h-full p-4 bg-zinc-950 text-zinc-100 font-mono text-xs border-0 focus:outline-none focus:ring-0 resize-none leading-relaxed placeholder-zinc-700"
+                className={`absolute inset-0 w-full h-full p-4 bg-transparent font-mono text-xs border-0 focus:outline-none focus:ring-0 resize-none leading-relaxed placeholder-zinc-700 whitespace-pre-wrap break-all overflow-y-auto ${
+                  inputSql ? "text-transparent caret-zinc-100 selection:bg-blue-600/30" : "text-zinc-100"
+                }`}
               />
               
               {!inputSql && (
@@ -505,7 +714,7 @@ function App() {
               {parseResult ? (
                 parseResult.success ? (
                   <code className="block select-text font-mono">
-                    {renderHighlightedSql(parseResult.formattedSql)}
+                    {renderHighlightedSql(parseResult.formattedTemplateSql || parseResult.formattedSql, true)}
                   </code>
                 ) : (
                   <div className="text-red-400 font-mono p-2 border border-red-900/50 bg-red-950/20 rounded">
