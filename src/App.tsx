@@ -436,18 +436,27 @@ function App() {
                 <Terminal size={14} />
                 <span>Raw Parameterized SQL Input</span>
               </div>
-              {inputSql && (
+              <div className="flex items-center gap-3 normal-case text-zinc-400">
                 <button
-                  onClick={() => {
-                    setInputSql("");
-                    triggerToast("Cleared input");
-                  }}
-                  className="hover:text-zinc-300 flex items-center gap-0.5 cursor-pointer"
+                  onClick={handlePaste}
+                  className="hover:text-zinc-200 flex items-center gap-1 cursor-pointer"
                 >
-                  <Eraser size={12} />
-                  <span>Clear</span>
+                  <ClipboardText size={14} />
+                  <span>Paste</span>
                 </button>
-              )}
+                {inputSql && (
+                  <button
+                    onClick={() => {
+                      setInputSql("");
+                      triggerToast("Cleared input");
+                    }}
+                    className="hover:text-zinc-200 flex items-center gap-1 cursor-pointer border-l border-zinc-800 pl-3"
+                  >
+                    <Eraser size={14} />
+                    <span>Clear</span>
+                  </button>
+                )}
+              </div>
             </div>
             
             <div className="flex-1 relative">
@@ -470,16 +479,7 @@ function App() {
               )}
             </div>
 
-            {/* Input Actions Footer */}
-            <div className="p-3 border-t border-zinc-800 bg-zinc-900/20 flex items-center gap-2">
-              <button
-                onClick={handlePaste}
-                className="flex items-center gap-1.5 text-xs text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 hover:border-zinc-750 px-3 py-1.5 rounded transition-all active:scale-[0.98] cursor-pointer"
-              >
-                <ClipboardText size={14} />
-                <span>Paste from Clipboard</span>
-              </button>
-            </div>
+
           </div>
 
           {/* B. Right Editor: Formatted & Substituted Output */}
@@ -552,12 +552,7 @@ function App() {
               <div className="flex items-center gap-4">
                 <span>Dialect: <strong className="text-zinc-400">{dialect === "mssql" ? "MS SQL" : "Postgres"}</strong></span>
                 {parseResult?.success && (
-                  <>
-                    <span>Substituted: <strong className="text-zinc-400">{stats.paramCount} params</strong></span>
-                    <span>Diff: <strong className={stats.charReduction >= 0 ? "text-emerald-500" : "text-amber-500"}>
-                      {stats.charReduction >= 0 ? `-${stats.charReduction}` : `+${Math.abs(stats.charReduction)}`} chars
-                    </strong></span>
-                  </>
+                  <span>Substituted: <strong className="text-zinc-400">{stats.paramCount} params</strong></span>
                 )}
               </div>
               {parseResult?.success && (
