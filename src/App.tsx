@@ -58,10 +58,9 @@ function App() {
       if (!isPaste) return;
 
       const activeEl = document.activeElement;
-      const isInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA");
 
-      // If focusing settings or search or parameter inputs, let default paste happen
-      if (isInput && activeEl.tagName === "INPUT") {
+      // If focusing settings, search, parameter inputs, or the raw query textarea, let default paste happen
+      if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
         return;
       }
 
@@ -183,7 +182,21 @@ function App() {
       const text = await invoke<string>("read_clipboard");
       if (text) {
         shouldAutoSaveRef.current = true;
-        setInputSql(text);
+        const textarea = rawTextareaRef.current;
+        if (textarea && (document.activeElement === textarea || textarea.selectionStart !== textarea.selectionEnd)) {
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const val = textarea.value;
+          const newVal = val.substring(0, start) + text + val.substring(end);
+          setInputSql(newVal);
+          const newCursorPos = start + text.length;
+          setTimeout(() => {
+            textarea.focus();
+            textarea.setSelectionRange(newCursorPos, newCursorPos);
+          }, 0);
+        } else {
+          setInputSql(text);
+        }
         triggerToast("Pasted query from clipboard");
       } else {
         triggerToast("Clipboard is empty");
@@ -193,7 +206,21 @@ function App() {
         const text = await navigator.clipboard.readText();
         if (text) {
           shouldAutoSaveRef.current = true;
-          setInputSql(text);
+          const textarea = rawTextareaRef.current;
+          if (textarea && (document.activeElement === textarea || textarea.selectionStart !== textarea.selectionEnd)) {
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const val = textarea.value;
+            const newVal = val.substring(0, start) + text + val.substring(end);
+            setInputSql(newVal);
+            const newCursorPos = start + text.length;
+            setTimeout(() => {
+              textarea.focus();
+              textarea.setSelectionRange(newCursorPos, newCursorPos);
+            }, 0);
+          } else {
+            setInputSql(text);
+          }
           triggerToast("Pasted query from clipboard");
         } else {
           triggerToast("Clipboard is empty");
@@ -384,7 +411,7 @@ function App() {
         <SettingsPanel config={config} onChange={setConfig} />
 
         {/* Scrollable list: Parameters & History */}
-        <div className="flex-1 overflow-y-auto flex flex-col divide-y divide-zinc-800">
+        <div className="flex-1 overflow-hidden flex flex-col divide-y divide-zinc-800">
           
           {/* Substituted Parameters */}
           {parseResult && parseResult.success && parseResult.parameters.length > 0 && (
@@ -475,6 +502,9 @@ function App() {
             rawPreRef={rawPreRef}
             rawTextareaRef={rawTextareaRef}
             onPasteClick={handlePasteClick}
+            onTextareaPaste={() => {
+              shouldAutoSaveRef.current = true;
+            }}
             renderHighlightedSql={renderHighlightedSql}
             triggerToast={triggerToast}
             panelOrientation={panelOrientation}

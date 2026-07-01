@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 export interface HistoryItem {
   id: string;
@@ -24,7 +24,7 @@ export function useQueryHistory() {
   }, []);
 
   // Save to history
-  const saveToHistory = (raw: string, formatted: string, dialect: "mssql" | "postgres") => {
+  const saveToHistory = useCallback((raw: string, formatted: string, dialect: "mssql" | "postgres") => {
     let wasAdded = false;
     setHistory((prev) => {
       // Check if it already exists to avoid duplicates
@@ -48,22 +48,22 @@ export function useQueryHistory() {
       return updated;
     });
     return wasAdded;
-  };
+  }, []);
 
   // Delete specific history item
-  const deleteHistoryItem = (id: string) => {
+  const deleteHistoryItem = useCallback((id: string) => {
     setHistory((prev) => {
       const updated = prev.filter((item) => item.id !== id);
       localStorage.setItem("sql_formatter_history", JSON.stringify(updated));
       return updated;
     });
-  };
+  }, []);
 
   // Clear all history items
-  const clearHistory = () => {
+  const clearHistory = useCallback(() => {
     setHistory([]);
     localStorage.removeItem("sql_formatter_history");
-  };
+  }, []);
 
   return {
     history,

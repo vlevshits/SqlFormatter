@@ -43,7 +43,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
           </p>
         </div>
       ) : (
-        <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
           <AnimatePresence initial={false}>
             {history.map((item) => (
               <motion.div

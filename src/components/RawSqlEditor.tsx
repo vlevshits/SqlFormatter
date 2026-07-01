@@ -8,6 +8,7 @@ interface RawSqlEditorProps {
   rawPreRef: React.RefObject<HTMLPreElement | null>;
   rawTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onPasteClick: () => void;
+  onTextareaPaste?: () => void;
   renderHighlightedSql: (sql: string, substitute: boolean) => React.ReactNode;
   triggerToast: (msg: string) => void;
   panelOrientation?: "vertical" | "horizontal";
@@ -20,6 +21,7 @@ export const RawSqlEditor: React.FC<RawSqlEditorProps> = ({
   rawPreRef,
   rawTextareaRef,
   onPasteClick,
+  onTextareaPaste,
   renderHighlightedSql,
   triggerToast,
   panelOrientation = "vertical",
@@ -71,6 +73,7 @@ export const RawSqlEditor: React.FC<RawSqlEditorProps> = ({
           ref={rawTextareaRef}
           value={inputSql}
           onChange={(e) => setInputSql(e.target.value)}
+          onPaste={onTextareaPaste}
           onScroll={(e) => {
             if (rawPreRef.current) {
               rawPreRef.current.scrollTop = e.currentTarget.scrollTop;

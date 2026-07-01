@@ -36,6 +36,40 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Update version numbers from tag
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "Updating project files to version $VERSION"
+            
+            # Update package.json
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json'));
+              pkg.version = '$VERSION';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+            
+            # Update tauri.conf.json
+            node -e "
+              const fs = require('fs');
+              const cfg = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json'));
+              cfg.version = '$VERSION';
+              fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(cfg, null, 2) + '\n');
+            "
+            
+            # Update Cargo.toml
+            node -e "
+              const fs = require('fs');
+              let content = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+              content = content.replace(/^version = \".*\"/m, 'version = \"' + '$VERSION' + '\"');
+              fs.writeFileSync('src-tauri/Cargo.toml', content);
+            "
+          else
+            echo "Not a tag release, skipping version update"
+          fi
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
