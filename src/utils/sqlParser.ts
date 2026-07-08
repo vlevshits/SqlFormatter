@@ -21,6 +21,11 @@ export interface FormatConfig {
   tabWidth: number;
   keywordCase: "upper" | "lower" | "preserve";
   logicalOperatorNewline: "before" | "after";
+  removeComments?: boolean;
+}
+
+export function isNewline(char: string): boolean {
+  return char === "\n" || char === "\r" || char === "\u2028" || char === "\u2029" || char === "\u0085";
 }
 
 /**
@@ -158,7 +163,11 @@ export function parseMssqlExecutesql(input: string): {
 /**
  * Scans the MS SQL template and substitutes parameters safely, respecting comments and strings.
  */
-export function substituteMssqlParameters(sqlTemplate: string, assignments: Record<string, string>): string {
+export function substituteMssqlParameters(
+  sqlTemplate: string,
+  assignments: Record<string, string>,
+  removeComments: boolean = false
+): string {
   // Normalize assignments keys to lowercase for case-insensitive matching
   const normAssignments: Record<string, string> = {};
   for (const [k, v] of Object.entries(assignments)) {
@@ -172,27 +181,50 @@ export function substituteMssqlParameters(sqlTemplate: string, assignments: Reco
 
     // 1. Single line comment
     if (char === "-" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "-") {
-      result += "--";
-      index += 2;
-      while (index < sqlTemplate.length && sqlTemplate[index] !== "\n") {
-        result += sqlTemplate[index];
-        index++;
+      if (removeComments) {
+        index += 2;
+        while (index < sqlTemplate.length && !isNewline(sqlTemplate[index])) {
+          index++;
+        }
+      } else {
+        result += "--";
+        index += 2;
+        while (index < sqlTemplate.length && !isNewline(sqlTemplate[index])) {
+          result += sqlTemplate[index];
+          index++;
+        }
       }
       continue;
     }
 
     // 2. Block comment
     if (char === "/" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "*") {
-      result += "/*";
-      index += 2;
-      while (index < sqlTemplate.length) {
-        if (sqlTemplate[index] === "*" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "/") {
-          result += "*/";
-          index += 2;
-          break;
+      if (removeComments) {
+        index += 2;
+        let foundEnd = false;
+        while (index < sqlTemplate.length) {
+          if (sqlTemplate[index] === "*" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "/") {
+            index += 2;
+            foundEnd = true;
+            break;
+          }
+          index++;
         }
-        result += sqlTemplate[index];
-        index++;
+        if (foundEnd) {
+          result += " ";
+        }
+      } else {
+        result += "/*";
+        index += 2;
+        while (index < sqlTemplate.length) {
+          if (sqlTemplate[index] === "*" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "/") {
+            result += "*/";
+            index += 2;
+            break;
+          }
+          result += sqlTemplate[index];
+          index++;
+        }
       }
       continue;
     }
@@ -241,7 +273,19 @@ export function substituteMssqlParameters(sqlTemplate: string, assignments: Reco
       continue;
     }
 
-    // 5. Normal character
+    // 5. Newline normalization
+    if (isNewline(char)) {
+      if (char === "\r" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "\n") {
+        result += "\n";
+        index += 2;
+      } else {
+        result += "\n";
+        index++;
+      }
+      continue;
+    }
+
+    // 6. Normal character
     result += char;
     index++;
   }
@@ -300,7 +344,7 @@ export function parsePostgresQuery(input: string): {
   sqlTemplate: string;
   paramValues: Record<string, string>;
 } {
-  const lines = input.split("\n");
+  const lines = input.split(/\r?\n|\r|\u2028|\u2029|\u0085/);
   const sqlLines: string[] = [];
   let paramLine = "";
 
@@ -382,7 +426,11 @@ export function parsePostgresQuery(input: string): {
 /**
  * Scans the PostgreSQL template and substitutes parameters safely, respecting comments and strings.
  */
-export function substitutePostgresParameters(sqlTemplate: string, assignments: Record<string, string>): string {
+export function substitutePostgresParameters(
+  sqlTemplate: string,
+  assignments: Record<string, string>,
+  removeComments: boolean = false
+): string {
   let result = "";
   let index = 0;
   while (index < sqlTemplate.length) {
@@ -390,27 +438,50 @@ export function substitutePostgresParameters(sqlTemplate: string, assignments: R
 
     // 1. Single line comment
     if (char === "-" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "-") {
-      result += "--";
-      index += 2;
-      while (index < sqlTemplate.length && sqlTemplate[index] !== "\n") {
-        result += sqlTemplate[index];
-        index++;
+      if (removeComments) {
+        index += 2;
+        while (index < sqlTemplate.length && !isNewline(sqlTemplate[index])) {
+          index++;
+        }
+      } else {
+        result += "--";
+        index += 2;
+        while (index < sqlTemplate.length && !isNewline(sqlTemplate[index])) {
+          result += sqlTemplate[index];
+          index++;
+        }
       }
       continue;
     }
 
     // 2. Block comment
     if (char === "/" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "*") {
-      result += "/*";
-      index += 2;
-      while (index < sqlTemplate.length) {
-        if (sqlTemplate[index] === "*" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "/") {
-          result += "*/";
-          index += 2;
-          break;
+      if (removeComments) {
+        index += 2;
+        let foundEnd = false;
+        while (index < sqlTemplate.length) {
+          if (sqlTemplate[index] === "*" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "/") {
+            index += 2;
+            foundEnd = true;
+            break;
+          }
+          index++;
         }
-        result += sqlTemplate[index];
-        index++;
+        if (foundEnd) {
+          result += " ";
+        }
+      } else {
+        result += "/*";
+        index += 2;
+        while (index < sqlTemplate.length) {
+          if (sqlTemplate[index] === "*" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "/") {
+            result += "*/";
+            index += 2;
+            break;
+          }
+          result += sqlTemplate[index];
+          index++;
+        }
       }
       continue;
     }
@@ -470,7 +541,19 @@ export function substitutePostgresParameters(sqlTemplate: string, assignments: R
       }
     }
 
-    // 5. Normal character
+    // 5. Newline normalization
+    if (isNewline(char)) {
+      if (char === "\r" && index + 1 < sqlTemplate.length && sqlTemplate[index + 1] === "\n") {
+        result += "\n";
+        index += 2;
+      } else {
+        result += "\n";
+        index++;
+      }
+      continue;
+    }
+
+    // 6. Normal character
     result += char;
     index++;
   }
@@ -535,11 +618,11 @@ export function formatAndSubstituteQuery(
         }));
 
         // Substitute
-        substitutedSql = substituteMssqlParameters(sqlTemplate, finalParamValues);
+        substitutedSql = substituteMssqlParameters(sqlTemplate, finalParamValues, config.removeComments);
       } else {
         // If not executesql, format raw
         sqlTemplate = trimmedInput;
-        substitutedSql = trimmedInput;
+        substitutedSql = substituteMssqlParameters(sqlTemplate, {}, config.removeComments);
       }
     } else {
       // Postgres parsing
@@ -562,7 +645,7 @@ export function formatAndSubstituteQuery(
       }));
 
       // Substitute
-      substitutedSql = substitutePostgresParameters(sqlTemplate, finalParamValues);
+      substitutedSql = substitutePostgresParameters(sqlTemplate, finalParamValues, config.removeComments);
     }
 
     // Format the substituted SQL using sql-formatter
@@ -576,7 +659,11 @@ export function formatAndSubstituteQuery(
       logicalOperatorNewline: config.logicalOperatorNewline
     });
 
-    const formattedTemplateSql = format(sqlTemplate, {
+    const cleanTemplate = dialect === "mssql"
+      ? substituteMssqlParameters(sqlTemplate, {}, config.removeComments)
+      : substitutePostgresParameters(sqlTemplate, {}, config.removeComments);
+
+    const formattedTemplateSql = format(cleanTemplate, {
       language: formatterLanguage,
       tabWidth: config.tabWidth,
       keywordCase: config.keywordCase,

@@ -18,6 +18,7 @@ function App() {
     tabWidth: 2,
     keywordCase: "upper",
     logicalOperatorNewline: "before",
+    removeComments: false,
   });
 
   const [paramOverrides, setParamOverrides] = useState<Record<string, string>>({});

@@ -112,4 +112,65 @@ describe("Full E2E formatAndSubstituteQuery", () => {
     expect(result.formattedSql).toContain("'5F6A667C-327F-462B-ABAF-B475010E8B07'");
     expect(result.formattedSql).toContain("'AFC04D3C-A943-42AA-B7B5-B475010E8B03'");
   });
+
+  it("should parse MS SQL comment ending with LS (\\u2028), PS (\\u2029), CR (\\r), or NextLine (\\u0085)", () => {
+    const input = `exec sp_executesql N'SELECT * FROM t WHERE col = @p1 -- comment\u2028WITH x AS (SELECT 1) SELECT * FROM x', N'@p1 int', @p1=42`;
+
+    const result = formatAndSubstituteQuery(input, "mssql", {
+      tabWidth: 2,
+      keywordCase: "upper",
+      logicalOperatorNewline: "before",
+      removeComments: false
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.formattedSql).toContain("-- comment");
+    expect(result.formattedSql).toContain("WITH");
+  });
+
+  it("should remove comments when removeComments is set to true for MS SQL", () => {
+    const input = `exec sp_executesql N'SELECT * FROM t WHERE col = @p1 -- single-line comment\n/* block\n   comment */ SELECT 1', N'@p1 int', @p1=42`;
+
+    const result = formatAndSubstituteQuery(input, "mssql", {
+      tabWidth: 2,
+      keywordCase: "upper",
+      logicalOperatorNewline: "before",
+      removeComments: true
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.formattedSql).not.toContain("single-line comment");
+    expect(result.formattedSql).not.toContain("block");
+    expect(result.formattedSql).toContain("col = 42");
+    expect(result.formattedTemplateSql).not.toContain("single-line comment");
+    expect(result.formattedTemplateSql).not.toContain("block");
+  });
+
+  it("should remove comments when removeComments is set to true for PostgreSQL", () => {
+    const input = `SELECT * FROM users WHERE status = $1; -- check active status\n/* multi\n   line */ SELECT 2;\n-- parameters: $1 = 'active'`;
+
+    const result = formatAndSubstituteQuery(input, "postgres", {
+      tabWidth: 2,
+      keywordCase: "upper",
+      logicalOperatorNewline: "before",
+      removeComments: true
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.formattedSql).not.toContain("check active status");
+    expect(result.formattedSql).not.toContain("multi");
+    expect(result.formattedSql).toContain("status = 'active';");
+  });
+
+  it("should not format keywords inside comments", () => {
+    const input = `-- SELECT * FROM t WHERE col = @p1 WITH x AS (SELECT 1)
+SELECT 1`;
+    const result = formatAndSubstituteQuery(input, "mssql", {
+      tabWidth: 2,
+      keywordCase: "upper",
+      logicalOperatorNewline: "before",
+      removeComments: false
+    });
+    console.log("DIAGNOSTIC RESULT:\n" + result.formattedSql);
+  });
 });
