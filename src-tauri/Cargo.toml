@@ -1,6 +1,6 @@
 [package]
 name = "sql-formatter"
-version = "1.0.0"
+version = "1.0.2"
 description = " SQL Formatter App"
 authors = ["Valiantsin Leushyts"]
 edition = "2021"
